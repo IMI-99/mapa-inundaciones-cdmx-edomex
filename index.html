@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Alerta Hídrica · Mapa de zonas de inundación CDMX y Edomex</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" integrity="sha512-puBpdR0798OZvTTbP4A8Ix/l+A4dHDD0DGqYW6RQ+9jxkRFclaxxQb/SJAWZfWAkuyeQUytO7+7N4QKrDh+drA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<style>
+  :root{
+    --bg:#0F1B2D;
+    --bg-panel:#16263D;
+    --bg-panel-2:#1D3049;
+    --bg-input:#122238;
+    --border:rgba(242,239,233,0.12);
+    --border-strong:rgba(242,239,233,0.22);
+    --text:#F2EFE9;
+    --text-muted:#93A6BC;
+    --accent:#3FA7C4;
+    --amarillo:#E8B23D;
+    --naranja:#E2792C;
+    --rojo:#D6495A;
+    --verde:#4C9A6A;
+    --radius:10px;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg); color:var(--text);
+    font-family:var(--sans);
+    overflow:hidden;
+  }
+  #app{ display:flex; flex-direction:column; height:100%; }
+
+  /* ---------- HEADER ---------- */
+  header{
+    display:flex; align-items:center; gap:14px;
+    padding:12px 18px;
+    background:linear-gradient(180deg, var(--bg-panel-2), var(--bg-panel));
+    border-bottom:1px solid var(--border);
+    z-index:1000;
+    flex-shrink:0;
+  }
+  .brand{ display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+  .brand h1{
+    margin:0; font-size:17px; font-weight:700; letter-spacing:-0.01em;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .brand h1 span{ color:var(--accent); }
+  .brand p{ margin:0; font-size:12px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .header-actions{ display:flex; gap:8px; flex-shrink:0; }
+  .btn{
+    font-family:var(--sans); font-size:13px; font-weight:600; cursor:pointer;
+    border-radius:8px; padding:9px 13px; border:1px solid var(--border-strong);
+    background:var(--bg-input); color:var(--text);
+    display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
+    transition:background .15s ease, border-color .15s ease, transform .05s ease;
+  }
+  .btn:hover{ background:#182b45; border-color:var(--accent); }
+  .btn:active{ transform:scale(0.97); }
+  .btn-danger{ background:var(--rojo); border-color:var(--rojo); color:#fff; }
+  .btn-danger:hover{ background:#c13646; border-color:#c13646; }
+  .btn-accent{ background:var(--accent); border-color:var(--accent); color:#08202b; }
+  .btn-accent:hover{ background:#57b8d1; }
+  .btn-ghost{ background:transparent; }
+
+  /* ---------- LAYOUT ---------- */
+  main{ flex:1; display:flex; min-height:0; position:relative; }
+  #map{ flex:1; height:100%; background:#0b1420; }
+  .leaflet-container{ background:#0b1420; font-family:var(--sans); }
+
+  aside{
+    width:340px; flex-shrink:0;
+    background:var(--bg-panel);
+    border-right:1px solid var(--border);
+    display:flex; flex-direction:column;
+    overflow:hidden;
+  }
+  .panel-scroll{ overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:18px; }
+
+  .stats-row{ display:flex; gap:8px; }
+  .stat-box{
+    flex:1; background:var(--bg-panel-2); border:1px solid var(--border);
+    border-radius:var(--radius); padding:10px 12px;
+  }
+  .stat-box .num{ font-family:var(--mono); font-size:20px; font-weight:700; line-height:1; }
+  .stat-box .lbl{ font-size:11px; color:var(--text-muted); margin-top:4px; }
+
+  .section-title{
+    font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
+    color:var(--text-muted); margin:0 0 10px 0;
+  }
+
+  input[type="search"]{
+    width:100%; padding:10px 12px; border-radius:8px;
+    border:1px solid var(--border-strong); background:var(--bg-input);
+    color:var(--text); font-size:14px; font-family:var(--sans);
+  }
+  input[type="search"]::placeholder{ color:var(--text-muted); }
+  input[type="search"]:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+
+  .filter-group{ display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+  .check{
+    display:flex; align-items:center; gap:9px; font-size:13.5px; cursor:pointer;
+    user-select:none; padding:5px 0;
+  }
+  .check input{ width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
+  .dot{ width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .dot.alta{ background:var(--rojo); }
+  .dot.media{ background:var(--naranja); }
+  .dot.moderada{ background:var(--amarillo); }
+
+  .legend-row{ display:flex; align-items:center; gap:9px; font-size:12.5px; color:var(--text-muted); padding:3px 0; }
+
+  #zona-list{ display:flex; flex-direction:column; gap:6px; }
+  .zona-item{
+    background:var(--bg-panel-2); border:1px solid var(--border); border-left:3px solid var(--naranja);
+    border-radius:8px; padding:10px 11px; cursor:pointer; transition:background .15s;
+  }
+  .zona-item:hover{ background:#223755; }
+  .zona-item.alta{ border-left-color:var(--rojo); }
+  .zona-item.media{ border-left-color:var(--naranja); }
+  .zona-item.moderada{ border-left-color:var(--amarillo); }
+  .zona-item .nombre{ font-size:13.5px; font-weight:600; }
+  .zona-item .meta{ font-size:11.5px; color:var(--text-muted); margin-top:2px; font-family:var(--mono); }
+  .empty-msg{ font-size:13px; color:var(--text-muted); padding:14px 0; text-align:center; }
+
+  .contribute{
+    background:var(--bg-panel-2); border:1px dashed var(--border-strong);
+    border-radius:var(--radius); padding:12px 13px; font-size:12.5px; color:var(--text-muted); line-height:1.5;
+  }
+  .contribute b{ color:var(--text); }
+
+  footer{
+    padding:9px 16px; font-size:11px; color:var(--text-muted);
+    border-top:1px solid var(--border); background:var(--bg-panel);
+    display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;
+  }
+  footer a{ color:var(--accent); }
+
+  /* Leaflet popup restyle */
+  .leaflet-popup-content-wrapper{ background:var(--bg-panel-2); color:var(--text); border-radius:10px; }
+  .leaflet-popup-tip{ background:var(--bg-panel-2); }
+  .leaflet-popup-content{ margin:12px 14px; font-family:var(--sans); font-size:13px; line-height:1.5; }
+  .pop-title{ font-weight:700; font-size:14.5px; margin-bottom:2px; }
+  .pop-tag{ display:inline-block; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+    padding:2px 7px; border-radius:99px; margin:4px 0 8px 0; }
+  .pop-tag.alta{ background:rgba(214,73,90,.18); color:#ff8d99; }
+  .pop-tag.media{ background:rgba(226,121,44,.18); color:#ffab6b; }
+  .pop-tag.moderada{ background:rgba(232,178,61,.18); color:#ffd479; }
+  .pop-src{ font-size:11px; color:var(--text-muted); margin-top:8px; font-family:var(--mono); }
+
+  @keyframes pulse-alta{
+    0%{ stroke-opacity:1; }
+    50%{ stroke-opacity:.15; }
+    100%{ stroke-opacity:1; }
+  }
+  .marker-alta path{ animation:pulse-alta 1.8s ease-in-out infinite; }
+
+  /* ---------- MOBILE DRAWER ---------- */
+  #drawer-toggle{ display:none; }
+  .toast{
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(20px);
+    background:var(--bg-panel-2); border:1px solid var(--border-strong); color:var(--text);
+    padding:10px 16px; border-radius:99px; font-size:13px; opacity:0; pointer-events:none;
+    transition:opacity .25s ease, transform .25s ease; z-index:3000; box-shadow:0 8px 24px rgba(0,0,0,.4);
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  @media (max-width: 820px){
+    .brand p{ display:none; }
+    .btn span.full{ display:none; }
+    aside{
+      position:fixed; left:0; right:0; bottom:0; top:auto; width:auto;
+      height:72vh; max-height:640px;
+      transform:translateY(100%); transition:transform .28s ease;
+      border-right:none; border-top:1px solid var(--border);
+      border-radius:16px 16px 0 0; z-index:1500;
+      box-shadow:0 -10px 40px rgba(0,0,0,.5);
+    }
+    aside.open{ transform:translateY(0); }
+    #drawer-toggle{
+      display:inline-flex; position:fixed; right:14px; bottom:18px; z-index:1400;
+      border-radius:99px; padding:13px 18px; box-shadow:0 8px 24px rgba(0,0,0,.45);
+    }
+    .drawer-handle{
+      display:flex; justify-content:center; padding:8px 0 2px 0; cursor:pointer;
+    }
+    .drawer-handle .bar{ width:38px; height:4px; border-radius:99px; background:var(--border-strong); }
+  }
+  @media (min-width: 821px){
+    .drawer-handle{ display:none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="brand">
+      <h1>Alerta Hídrica <span>· Valle de México</span></h1>
+      <p>Mapa comunitario de zonas de inundación — CDMX y Estado de México · 2026</p>
+    </div>
+    <div class="header-actions">
+      <a class="btn" href="tel:911"><span>🚨</span><span class="full">911</span></a>
+      <button class="btn btn-accent" id="btn-reportar"><span>📣</span><span class="full">Reportar</span></button>
+      <button class="btn btn-ghost" id="btn-compartir"><span>🔗</span><span class="full">Compartir</span></button>
+    </div>
+  </header>
+
+  <main>
+    <aside id="sidebar">
+      <div class="drawer-handle" id="drawer-handle"><div class="bar"></div></div>
+      <div class="panel-scroll">
+
+        <div class="stats-row">
+          <div class="stat-box">
+            <div class="num" id="stat-total">0</div>
+            <div class="lbl">zonas registradas</div>
+          </div>
+          <div class="stat-box">
+            <div class="num" id="stat-alta">0</div>
+            <div class="lbl">riesgo alto (rojo)</div>
+          </div>
+          <div class="stat-box">
+            <div class="num" id="stat-shown">0</div>
+            <div class="lbl">visibles ahora</div>
+          </div>
+        </div>
+
+        <div>
+          <p class="section-title">Buscar colonia o municipio</p>
+          <input type="search" id="search" placeholder="Ej. Ecatepec, Iztapalapa, Chalco…">
+        </div>
+
+        <div>
+          <p class="section-title">Entidad</p>
+          <div class="filter-group">
+            <label class="check"><input type="checkbox" class="f-entidad" value="CDMX" checked> Ciudad de México</label>
+            <label class="check"><input type="checkbox" class="f-entidad" value="Edomex" checked> Estado de México</label>
+          </div>
+        </div>
+
+        <div>
+          <p class="section-title">Nivel de riesgo</p>
+          <div class="filter-group">
+            <label class="check"><input type="checkbox" class="f-severidad" value="alta" checked><span class="dot alta"></span> Alto — inundación documentada, vehículos varados</label>
+            <label class="check"><input type="checkbox" class="f-severidad" value="media" checked><span class="dot media"></span> Medio — encharcamiento severo recurrente</label>
+            <label class="check"><input type="checkbox" class="f-severidad" value="moderada" checked><span class="dot moderada"></span> Moderado — encharcamiento reportado</label>
+          </div>
+        </div>
+
+        <div>
+          <p class="section-title">Zonas (<span id="list-count">0</span>)</p>
+          <div id="zona-list"></div>
+        </div>
+
+        <div class="contribute">
+          <b>¿Viste una inundación?</b><br>
+          Este mapa crece con reportes de la comunidad. Usa el botón <b>Reportar</b> de arriba para compartir la ubicación por WhatsApp o redes — cada dato ayuda a que alguien más evite perder su auto o algo peor.
+        </div>
+
+      </div>
+    </aside>
+
+    <button class="btn btn-danger" id="drawer-toggle">☰ Filtros y zonas</button>
+
+    <div id="map"></div>
+  </main>
+
+  <footer>
+    <span>Fuentes: notas de prensa citadas en cada punto (Milenio, N+, Excélsior, El Universal, El Heraldo, LatinUS, Nación321, CAEM, UNAM) · datos de mayo–septiembre 2026, temporada de lluvias en curso. Faltan por incorporar enero–abril 2026 — contribuye si tienes datos.</span>
+    <span>Última actualización: 10 sep 2026 · No sustituye alertas oficiales de Protección Civil.</span>
+  </footer>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLLlTSXzWQzxuSg4DiQUCpauz/EWjgk5TYQqX/kvn9pG1NpYfqg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+/* =========================================================
+   DATOS SEMILLA — zonas de inundación CDMX / Edomex, 2026
+   Coordenadas aproximadas a nivel de colonia/municipio a partir
+   de coberturas periodísticas y reportes de CAEM / Protección Civil.
+   Reemplaza o amplía este arreglo conforme llegues reportes nuevos.
+   ========================================================= */
+const zonas = [
+  {nombre:"Santa María Aztahuacán", entidad:"CDMX", demarcacion:"Iztapalapa", lat:19.3608, lng:-99.0138, severidad:"alta",
+    descripcion:"Colonia recurrentemente inundada; cercanía con cauces entubados y hundimientos diferenciales agravan el encharcamiento.", fecha:"jun 2026", fuente:"LatinUS"},
+  {nombre:"Santa Martha Acatitla", entidad:"CDMX", demarcacion:"Iztapalapa", lat:19.3564, lng:-98.9917, severidad:"alta",
+    descripcion:"Zona oriente de Iztapalapa con inundaciones repetidas durante lluvias fuertes que afectan viviendas y comercios.", fecha:"jun 2026", fuente:"LatinUS"},
+  {nombre:"Calzada Ermita Iztapalapa", entidad:"CDMX", demarcacion:"Iztapalapa", lat:19.3467, lng:-99.0658, severidad:"alta",
+    descripcion:"Vialidad principal donde se han medido niveles de agua superiores a 10 cm, con afectación severa al tránsito.", fecha:"may 2026", fuente:"Nación321"},
+  {nombre:"Gustavo A. Madero (zona centro)", entidad:"CDMX", demarcacion:"Gustavo A. Madero", lat:19.4840, lng:-99.1140, severidad:"alta",
+    descripcion:"Identificada por un estudio de la UNAM como la alcaldía con mayores afectaciones por acumulación de agua ante lluvias de 50–70 mm.", fecha:"may 2026", fuente:"Milenio / UNAM"},
+  {nombre:"Bulevar Adolfo Ruiz Cortines", entidad:"CDMX", demarcacion:"Coyoacán", lat:19.3080, lng:-99.1290, severidad:"media",
+    descripcion:"Tramo con encharcamientos recurrentes que complican la circulación durante tormentas intensas.", fecha:"jun 2026", fuente:"LatinUS"},
+  {nombre:"Viaducto Tlalpan x Periférico", entidad:"CDMX", demarcacion:"Tlalpan", lat:19.2870, lng:-99.1590, severidad:"media",
+    descripcion:"Cruce vial con historial de encharcamientos que afectan a automovilistas en temporada de lluvias.", fecha:"jun 2026", fuente:"LatinUS"},
+  {nombre:"Avenida Tláhuac x Periférico Oriente", entidad:"CDMX", demarcacion:"Tláhuac", lat:19.2850, lng:-99.0130, severidad:"media",
+    descripcion:"Punto donde Protección Civil ha pedido a automovilistas extremar precauciones por encharcamientos importantes.", fecha:"jul 2026", fuente:"El Heraldo de México"},
+  {nombre:"Xochimilco (zona centro)", entidad:"CDMX", demarcacion:"Xochimilco", lat:19.2647, lng:-99.1032, severidad:"media",
+    descripcion:"El Heroico Cuerpo de Bomberos ha intervenido para desalojar agua pluvial acumulada en tramos de la demarcación.", fecha:"jul 2026", fuente:"El Heraldo de México"},
+  {nombre:"Centro Histórico (Eje Central / Bellas Artes)", entidad:"CDMX", demarcacion:"Cuauhtémoc", lat:19.4360, lng:-99.1410, severidad:"media",
+    descripcion:"Encharcamientos importantes sobre avenida Juárez, Bellas Artes y Eje Central que afectan tránsito peatonal y vehicular.", fecha:"may 2026", fuente:"Nación321"},
+  {nombre:"Marina Nacional", entidad:"CDMX", demarcacion:"Miguel Hidalgo", lat:19.4510, lng:-99.1870, severidad:"media",
+    descripcion:"Una de las zonas más afectadas por encharcamientos severos durante tormentas de la temporada 2026.", fecha:"jul 2026", fuente:"Mundo Ejecutivo CDMX"},
+  {nombre:"Santa Fe", entidad:"CDMX", demarcacion:"Álvaro Obregón / Cuajimalpa", lat:19.3590, lng:-99.2620, severidad:"media",
+    descripcion:"Zona de barrancas y fuerte pendiente donde las lluvias intensas generan encharcamientos y afectaciones viales.", fecha:"jul 2026", fuente:"Mundo Ejecutivo CDMX"},
+  {nombre:"Guelatao", entidad:"CDMX", demarcacion:"Iztapalapa", lat:19.3730, lng:-99.0280, severidad:"moderada",
+    descripcion:"Encharcamientos reportados durante el pico de la temporada de lluvias 2026.", fecha:"jul 2026", fuente:"Mundo Ejecutivo CDMX"},
+
+  {nombre:"Vía José López Portillo x Insurgentes", entidad:"Edomex", demarcacion:"Ecatepec", lat:19.6050, lng:-99.0500, severidad:"alta",
+    descripcion:"Cámaras del C4 del Agua detectaron encharcamiento severo; una unidad de transporte público quedó varada en el sitio.", fecha:"sep 2025 / recurrente 2026", fuente:"El Universal"},
+  {nombre:"Ecatepec — corredor Xalostoc / Quinto Sol / Nuevo Laredo", entidad:"Edomex", demarcacion:"Ecatepec", lat:19.5460, lng:-99.0700, severidad:"alta",
+    descripcion:"El municipio con más colonias asentadas sobre el antiguo Lago de Texcoco; un solo evento afectó cerca de 497,743 m² en 13 colonias.", fecha:"may 2026", fuente:"Milenio / Atlas CAEM"},
+  {nombre:"Plaza Aragón / Avenida Central", entidad:"Edomex", demarcacion:"Nezahualcóyotl", lat:19.4020, lng:-99.0280, severidad:"alta",
+    descripcion:"Vehículos varados por encharcamientos en Avenida Central; el tránsito colapsó desde la zona de Venta de Carpio.", fecha:"may 2026", fuente:"N+"},
+  {nombre:"Valle de Chalco (centro — Guadalupana / Providencia)", entidad:"Edomex", demarcacion:"Valle de Chalco Solidaridad", lat:19.2917, lng:-98.9389, severidad:"alta",
+    descripcion:"Parte del corredor de mayor vulnerabilidad hídrica del oriente del Edomex según el Atlas de Inundaciones 2026 de la CAEM.", fecha:"may 2026 / sep 2025", fuente:"Heraldo Edomex / El Universal"},
+  {nombre:"Chalco de Díaz Covarrubias", entidad:"Edomex", demarcacion:"Chalco", lat:19.2640, lng:-98.8990, severidad:"alta",
+    descripcion:"Trabajos de desazolve activos en el Canal La Compañía para reducir el riesgo de desbordamiento en la zona oriente.", fecha:"may 2026", fuente:"Heraldo Edomex"},
+  {nombre:"Los Reyes–La Paz", entidad:"Edomex", demarcacion:"La Paz", lat:19.3210, lng:-98.9800, severidad:"media",
+    descripcion:"Incluido en el Atlas de Inundaciones 2026 de la CAEM como zona de riesgo con operativos del Grupo Tláloc activos.", fecha:"may 2026", fuente:"Heraldo Edomex"},
+  {nombre:"Ixtapaluca", entidad:"Edomex", demarcacion:"Ixtapaluca", lat:19.3220, lng:-98.8850, severidad:"media",
+    descripcion:"Inundaciones de hasta 60 cm registradas en avenidas principales durante trombas fuertes.", fecha:"jun 2025 / recurrente 2026", fuente:"Excélsior"},
+  {nombre:"Coacalco de Berriozábal", entidad:"Edomex", demarcacion:"Coacalco", lat:19.6310, lng:-99.1030, severidad:"media",
+    descripcion:"Encharcamientos importantes en avenidas principales durante tormentas de la temporada.", fecha:"jun 2025 / recurrente 2026", fuente:"Excélsior"},
+  {nombre:"Presa Cuadros", entidad:"Edomex", demarcacion:"Naucalpan", lat:19.4650, lng:-99.2550, severidad:"alta",
+    descripcion:"Vecinos reportan temor por posible desborde de la presa pese a labores de desfogue durante lluvias intensas.", fecha:"jun 2025 / vigente 2026", fuente:"Excélsior"},
+  {nombre:"Tlalnepantla de Baz", entidad:"Edomex", demarcacion:"Tlalnepantla", lat:19.5400, lng:-99.1950, severidad:"moderada",
+    descripcion:"Municipio bajo alerta por lluvias intensas y atendido por brigadas del Grupo Tláloc ante encharcamientos.", fecha:"ago 2026", fuente:"N+"},
+  {nombre:"San José El Jaral", entidad:"Edomex", demarcacion:"Atizapán de Zaragoza", lat:19.5750, lng:-99.2650, severidad:"moderada",
+    descripcion:"Colonia atendida por la CAEM ante encharcamientos durante el primer mes de la temporada de lluvias.", fecha:"jun 2026", fuente:"Heraldo Edomex / CAEM"},
+  {nombre:"Rancho San Blas / Villa Jardín / La Palma", entidad:"Edomex", demarcacion:"Cuautitlán", lat:19.6720, lng:-99.1780, severidad:"moderada",
+    descripcion:"Colonias con encharcamientos atendidos por brigadas estatales durante la temporada de lluvias 2026.", fecha:"may 2026", fuente:"Milenio / Atlas CAEM"},
+  {nombre:"Niños Héroes", entidad:"Edomex", demarcacion:"Cuautitlán Izcalli", lat:19.6500, lng:-99.2260, severidad:"moderada",
+    descripcion:"Colonia identificada con encharcamientos recurrentes en el Atlas de Inundaciones 2026 de la CAEM.", fecha:"may 2026", fuente:"Milenio / Atlas CAEM"},
+  {nombre:"Real del Valle", entidad:"Edomex", demarcacion:"Acolman", lat:19.6350, lng:-98.9130, severidad:"moderada",
+    descripcion:"Colonia con encharcamientos documentados por la CAEM durante el arranque de la temporada de lluvias.", fecha:"may 2026", fuente:"Milenio / Atlas CAEM"},
+  {nombre:"Autopista México–Puebla km 3 / Puente La Concordia", entidad:"Edomex", demarcacion:"Chalco / Valle de Chalco", lat:19.3350, lng:-98.9700, severidad:"media",
+    descripcion:"Asentamientos y anegaciones reportados en el tramo de acceso hacia Chalco y Valle de Chalco Solidaridad.", fecha:"may 2026", fuente:"N+"},
+];
+
+/* =========================================================
+   MAPA
+   ========================================================= */
+const map = L.map('map', { zoomControl:false, attributionControl:true }).setView([19.42, -99.08], 10);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd',
+  maxZoom: 19
+}).addTo(map);
+
+L.control.zoom({ position:'bottomright' }).addTo(map);
+
+const colores = { alta:'#D6495A', media:'#E2792C', moderada:'#E8B23D' };
+const radios  = { alta:11, media:9, moderada:7 };
+
+zonas.forEach(z => {
+  z.marker = L.circleMarker([z.lat, z.lng], {
+    radius: radios[z.severidad],
+    color: colores[z.severidad],
+    weight: 2,
+    fillColor: colores[z.severidad],
+    fillOpacity: 0.55,
+    className: 'marker-' + z.severidad
+  });
+  z.marker.bindPopup(`
+    <div class="pop-title">${z.nombre}</div>
+    <div style="color:#93A6BC;font-size:12px;">${z.demarcacion} · ${z.entidad}</div>
+    <div class="pop-tag ${z.severidad}">${z.severidad === 'alta' ? 'Riesgo alto' : z.severidad === 'media' ? 'Riesgo medio' : 'Riesgo moderado'}</div>
+    <div>${z.descripcion}</div>
+    <div class="pop-src">📅 ${z.fecha} · Fuente: ${z.fuente}</div>
+  `);
+  z.marker.addTo(map);
+});
+
+/* =========================================================
+   FILTROS + LISTA
+   ========================================================= */
+const state = { entidades: new Set(['CDMX','Edomex']), severidades: new Set(['alta','media','moderada']), q: '' };
+
+function zonaVisible(z){
+  if(!state.entidades.has(z.entidad)) return false;
+  if(!state.severidades.has(z.severidad)) return false;
+  if(state.q){
+    const hay = (z.nombre + ' ' + z.demarcacion).toLowerCase().includes(state.q.toLowerCase());
+    if(!hay) return false;
+  }
+  return true;
+}
+
+function renderList(){
+  const listEl = document.getElementById('zona-list');
+  listEl.innerHTML = '';
+  let shown = 0;
+
+  zonas.forEach(z => {
+    const visible = zonaVisible(z);
+    if(visible){
+      if(!map.hasLayer(z.marker)) z.marker.addTo(map);
+      shown++;
+      const item = document.createElement('div');
+      item.className = 'zona-item ' + z.severidad;
+      item.innerHTML = `<div class="nombre">${z.nombre}</div><div class="meta">${z.demarcacion} · ${z.entidad}</div>`;
+      item.addEventListener('click', () => {
+        map.flyTo([z.lat, z.lng], 14, { duration: 0.6 });
+        z.marker.openPopup();
+        if(window.innerWidth <= 820) closeDrawer();
+      });
+      listEl.appendChild(item);
+    } else {
+      if(map.hasLayer(z.marker)) map.removeLayer(z.marker);
+    }
+  });
+
+  if(shown === 0){
+    listEl.innerHTML = '<div class="empty-msg">Ninguna zona coincide con estos filtros.</div>';
+  }
+
+  document.getElementById('list-count').textContent = shown;
+  document.getElementById('stat-shown').textContent = shown;
+}
+
+function initStats(){
+  document.getElementById('stat-total').textContent = zonas.length;
+  document.getElementById('stat-alta').textContent = zonas.filter(z => z.severidad === 'alta').length;
+}
+
+document.querySelectorAll('.f-entidad').forEach(cb => {
+  cb.addEventListener('change', () => {
+    state.entidades = new Set([...document.querySelectorAll('.f-entidad:checked')].map(c => c.value));
+    renderList();
+  });
+});
+document.querySelectorAll('.f-severidad').forEach(cb => {
+  cb.addEventListener('change', () => {
+    state.severidades = new Set([...document.querySelectorAll('.f-severidad:checked')].map(c => c.value));
+    renderList();
+  });
+});
+document.getElementById('search').addEventListener('input', (e) => {
+  state.q = e.target.value;
+  renderList();
+});
+
+initStats();
+renderList();
+
+/* =========================================================
+   DRAWER MÓVIL
+   ========================================================= */
+const sidebar = document.getElementById('sidebar');
+function openDrawer(){ sidebar.classList.add('open'); }
+function closeDrawer(){ sidebar.classList.remove('open'); }
+document.getElementById('drawer-toggle').addEventListener('click', () => {
+  sidebar.classList.contains('open') ? closeDrawer() : openDrawer();
+});
+document.getElementById('drawer-handle').addEventListener('click', closeDrawer);
+
+/* =========================================================
+   REPORTAR / COMPARTIR — usa Web Share API (gratis, sin backend)
+   ========================================================= */
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+async function compartirTexto(texto, titulo){
+  if(navigator.share){
+    try{ await navigator.share({ title: titulo, text: texto }); }
+    catch(e){ /* usuario canceló */ }
+  } else if(navigator.clipboard){
+    await navigator.clipboard.writeText(texto);
+    toast('Copiado — pégalo en WhatsApp o redes');
+  } else {
+    toast('Copia manualmente: ' + texto);
+  }
+}
+
+document.getElementById('btn-reportar').addEventListener('click', () => {
+  const texto = '🚨 Reporte de inundación — Alerta Hídrica Valle de México. Ubicación: [escribe aquí calle/colonia y municipio o alcaldía]. Nivel de agua aprox.: [bajo/medio/alto]. Hora: ' + new Date().toLocaleString('es-MX');
+  compartirTexto(texto, 'Reportar inundación');
+});
+
+document.getElementById('btn-compartir').addEventListener('click', () => {
+  compartirTexto('Mira este mapa comunitario de zonas de inundación en CDMX y Edomex 👇', 'Alerta Hídrica · Valle de México');
+});
+</script>
+</body>
+</html>
