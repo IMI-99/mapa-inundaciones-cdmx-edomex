@@ -320,7 +320,6 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLLlTSXzWQzxuSg4DiQUCpauz/EWjgk5TYQqX/kvn9pG1NpYfqg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js" referrerpolicy="no-referrer"></script>
 <script>
 /* =========================================================
    DATOS SEMILLA — zonas de inundación CDMX / Edomex, 2026
@@ -539,7 +538,7 @@ document.getElementById('btn-compartir').addEventListener('click', () => {
    REPORTES CIUDADANOS — Google Form → Google Sheet publicada como CSV
    Cambia este link si algún día vuelves a publicar la hoja.
    ========================================================= */
-const CSV_REPORTES_URL = 'https://docs.google.com/spreadsheets/d/1YKslZobi70nQKiERt0SmdL35IiENOUVc70tJP3q2qA0/gviz/tq?tqx=out:csv&gid=1832295522';
+const CSV_REPORTES_URL = 'https://docs.google.com/spreadsheets/d/1YKslZobi70nQKiERt0SmdL35IiENOUVc70tJP3q2qA0/gviz/tq?gid=1832295522';
 
 function severidadDesdeAfectacion(texto){
   if(!texto) return 'moderada';
@@ -579,63 +578,90 @@ function renderPending(lista){
   });
 }
 
-async function cargarReportesCiudadanos(){
+function cargarReportesCiudadanos(){
   const statusEl = document.getElementById('citizen-status');
-  if(typeof Papa === 'undefined'){ statusEl.textContent = 'No se pudo cargar la librería de datos.'; return; }
+  const callbackName = 'gvizCallback' + Math.floor(Math.random() * 1000000);
 
-  Papa.parse(CSV_REPORTES_URL, {
-    download: true,
-    header: true,
-    complete: async (results) => {
-      const filas = (results.data || []).filter(r => (r['Colonia'] || '').trim() || (r['¿En qué alcaldía o municipio ocurrió?'] || '').trim());
-      if(filas.length === 0){ statusEl.textContent = 'Aún no hay reportes — comparte el formulario.'; return; }
+  window[callbackName] = (response) => {
+    procesarReportesGviz(response);
+    delete window[callbackName];
+    scriptEl.remove();
+  };
 
-      statusEl.textContent = `Ubicando ${filas.length} reporte(s)…`;
-      const pendientes = [];
+  const scriptEl = document.createElement('script');
+  scriptEl.src = `${CSV_REPORTES_URL}&tqx=responseHandler:${callbackName}`;
+  scriptEl.onerror = () => { statusEl.textContent = 'No se pudieron cargar los reportes (revisa la conexión).'; };
+  document.body.appendChild(scriptEl);
+}
 
-      for(const fila of filas){
-        const entidad = (fila['¿En qué alcaldía o municipio ocurrió?'] || '').trim();
-        const colonia = (fila['Colonia'] || '').trim();
-        const cp = (fila['Código Postal'] || '').trim();
-        const calle = (fila['Calle o Avenida'] || '').trim();
-        const afectacion = (fila['Afectación'] || '').trim();
-        const descripcion = (fila['Descripción breve de la situación'] || '').trim();
-        const fecha = (fila['Marca temporal'] || '').trim();
-        const severidad = severidadDesdeAfectacion(afectacion);
+async function procesarReportesGviz(response){
+  const statusEl = document.getElementById('citizen-status');
+  if(!response || response.status !== 'ok' || !response.table){
+    statusEl.textContent = 'No se pudieron cargar los reportes.';
+    return;
+  }
 
-        const consulta = [calle, colonia, cp, entidad === 'CDMX' ? 'Ciudad de México' : 'Estado de México', 'México'].filter(Boolean).join(', ');
-        const coords = await geocodificar(consulta);
-        await new Promise(r => setTimeout(r, 1100)); // respeta el límite de 1 solicitud/seg de Nominatim
+  const cols = response.table.cols.map(c => (c.label || '').trim());
+  const idx = {
+    fecha: cols.indexOf('Marca temporal'),
+    entidad: cols.indexOf('¿En qué alcaldía o municipio ocurrió?'),
+    colonia: cols.indexOf('Colonia'),
+    cp: cols.indexOf('Código Postal'),
+    calle: cols.indexOf('Calle o Avenida'),
+    afectacion: cols.indexOf('Afectación'),
+    descripcion: cols.indexOf('Descripción breve de la situación')
+  };
+  const getVal = (row, i) => (i >= 0 && row.c[i] && row.c[i].v !== null && row.c[i].v !== undefined) ? String(row.c[i].v).trim() : '';
 
-        if(coords){
-          const marker = L.circleMarker([coords.lat, coords.lng], {
-            radius: radios[severidad] - 1,
-            color: colores[severidad],
-            weight: 2,
-            dashArray: '4,3',
-            fillColor: colores[severidad],
-            fillOpacity: 0.28,
-            className: 'marker-ciudadano'
-          });
-          marker.bindPopup(`
-            <div class="pop-title">${colonia || 'Reporte ciudadano'}</div>
-            <div style="color:#93A6BC;font-size:12px;">${calle ? calle + ' · ' : ''}${entidad}</div>
-            <div class="pop-tag ${severidad}">📍 Reporte ciudadano (sin verificar)</div>
-            <div>${descripcion || 'Sin descripción adicional.'}</div>
-            <div class="pop-src">📅 ${fecha || 'Fecha no disponible'}</div>
-          `);
-          marker.addTo(capaCiudadana);
-          contadorCiudadanos++;
-        } else {
-          pendientes.push({ entidad, colonia, cp, calle });
-        }
-      }
+  const filas = (response.table.rows || [])
+    .map(row => ({
+      fecha: getVal(row, idx.fecha),
+      entidad: getVal(row, idx.entidad),
+      colonia: getVal(row, idx.colonia),
+      cp: getVal(row, idx.cp),
+      calle: getVal(row, idx.calle),
+      afectacion: getVal(row, idx.afectacion),
+      descripcion: getVal(row, idx.descripcion)
+    }))
+    .filter(f => f.colonia || f.entidad);
 
-      statusEl.textContent = `${contadorCiudadanos} reporte(s) ciudadano(s) en el mapa`;
-      renderPending(pendientes);
-    },
-    error: () => { statusEl.textContent = 'No se pudieron cargar los reportes.'; }
-  });
+  if(filas.length === 0){ statusEl.textContent = 'Aún no hay reportes — comparte el formulario.'; return; }
+
+  statusEl.textContent = `Ubicando ${filas.length} reporte(s)…`;
+  const pendientes = [];
+
+  for(const f of filas){
+    const severidad = severidadDesdeAfectacion(f.afectacion);
+    const consulta = [f.calle, f.colonia, f.cp, f.entidad === 'CDMX' ? 'Ciudad de México' : 'Estado de México', 'México'].filter(Boolean).join(', ');
+    const coords = await geocodificar(consulta);
+    await new Promise(r => setTimeout(r, 1100)); // respeta el límite de 1 solicitud/seg de Nominatim
+
+    if(coords){
+      const marker = L.circleMarker([coords.lat, coords.lng], {
+        radius: radios[severidad] - 1,
+        color: colores[severidad],
+        weight: 2,
+        dashArray: '4,3',
+        fillColor: colores[severidad],
+        fillOpacity: 0.28,
+        className: 'marker-ciudadano'
+      });
+      marker.bindPopup(`
+        <div class="pop-title">${f.colonia || 'Reporte ciudadano'}</div>
+        <div style="color:#93A6BC;font-size:12px;">${f.calle ? f.calle + ' · ' : ''}${f.entidad}</div>
+        <div class="pop-tag ${severidad}">📍 Reporte ciudadano (sin verificar)</div>
+        <div>${f.descripcion || 'Sin descripción adicional.'}</div>
+        <div class="pop-src">📅 ${f.fecha || 'Fecha no disponible'}</div>
+      `);
+      marker.addTo(capaCiudadana);
+      contadorCiudadanos++;
+    } else {
+      pendientes.push(f);
+    }
+  }
+
+  statusEl.textContent = `${contadorCiudadanos} reporte(s) ciudadano(s) en el mapa`;
+  renderPending(pendientes);
 }
 
 document.getElementById('toggle-citizen').addEventListener('change', (e) => {
