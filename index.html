@@ -132,6 +132,31 @@
   }
   .contribute b{ color:var(--text); }
 
+  .citizen-toggle{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--bg-panel-2); border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px;
+  }
+  .citizen-toggle .lbl{ font-size:13px; font-weight:600; }
+  .citizen-toggle .sub{ font-size:11px; color:var(--text-muted); margin-top:2px; }
+  .switch{ position:relative; width:38px; height:22px; flex-shrink:0; }
+  .switch input{ opacity:0; width:0; height:0; }
+  .slider{ position:absolute; cursor:pointer; inset:0; background:#2a3f5c; border-radius:99px; transition:.2s; }
+  .slider:before{ content:""; position:absolute; height:16px; width:16px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s; }
+  input:checked + .slider{ background:var(--accent); }
+  input:checked + .slider:before{ transform:translateX(16px); }
+
+  .pending-item{
+    background:var(--bg-panel-2); border:1px solid var(--border); border-left:3px solid var(--text-muted);
+    border-radius:8px; padding:10px 11px;
+  }
+  .pending-item .nombre{ font-size:13px; font-weight:600; }
+  .pending-item .meta{ font-size:11px; color:var(--text-muted); margin-top:3px; line-height:1.5; }
+  .pending-item .badge{
+    display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase;
+    padding:2px 6px; border-radius:99px; background:rgba(147,166,188,.18); color:var(--text-muted); margin-top:5px;
+  }
+  .marker-ciudadano path{ stroke-dasharray: 4 3; }
+
   footer{
     padding:9px 16px; font-size:11px; color:var(--text-muted);
     border-top:1px solid var(--border); background:var(--bg-panel);
@@ -256,6 +281,22 @@
           <div id="zona-list"></div>
         </div>
 
+        <div class="citizen-toggle">
+          <div>
+            <div class="lbl">Reportes ciudadanos</div>
+            <div class="sub" id="citizen-status">Cargando…</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-citizen" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div id="pending-section" style="display:none;">
+          <p class="section-title">Reportes por confirmar (<span id="pending-count">0</span>)</p>
+          <div id="pending-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+        </div>
+
         <div class="contribute">
           <b>¿Viste una inundación?</b><br>
           Este mapa crece con reportes de la comunidad. Usa el botón <b>Reportar</b> de arriba para compartir la ubicación por WhatsApp o redes — cada dato ayuda a que alguien más evite perder su auto o algo peor.
@@ -279,6 +320,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLLlTSXzWQzxuSg4DiQUCpauz/EWjgk5TYQqX/kvn9pG1NpYfqg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js" referrerpolicy="no-referrer"></script>
 <script>
 /* =========================================================
    DATOS SEMILLA — zonas de inundación CDMX / Edomex, 2026
@@ -492,6 +534,116 @@ document.getElementById('btn-reportar').addEventListener('click', () => {
 document.getElementById('btn-compartir').addEventListener('click', () => {
   compartirTexto('Mira este mapa comunitario de zonas de inundación en CDMX y Edomex 👇', 'Alerta Hídrica · Valle de México');
 });
+
+/* =========================================================
+   REPORTES CIUDADANOS — Google Form → Google Sheet publicada como CSV
+   Cambia este link si algún día vuelves a publicar la hoja.
+   ========================================================= */
+const CSV_REPORTES_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTX53-ZpsuVpoVRxUm74Kb6STrlVrla9SLaZeod-u57j25QH9FvPGUcKGusd0729K2E7oOBQ7YFPMk-/pub?output=csv';
+
+function severidadDesdeAfectacion(texto){
+  if(!texto) return 'moderada';
+  const t = texto.toLowerCase();
+  if(t.includes('alto')) return 'alta';
+  if(t.includes('medio')) return 'media';
+  return 'moderada';
+}
+
+const capaCiudadana = L.layerGroup().addTo(map);
+let contadorCiudadanos = 0;
+
+async function geocodificar(direccionTexto){
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=mx&q=${encodeURIComponent(direccionTexto)}`;
+  try{
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data && data[0]) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+  }catch(e){ /* sin conexión o el servicio no respondió */ }
+  return null;
+}
+
+function renderPending(lista){
+  const section = document.getElementById('pending-section');
+  const cont = document.getElementById('pending-list');
+  cont.innerHTML = '';
+  if(lista.length === 0){ section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  document.getElementById('pending-count').textContent = lista.length;
+  lista.forEach(r => {
+    const item = document.createElement('div');
+    item.className = 'pending-item';
+    item.innerHTML = `<div class="nombre">${r.colonia || 'Colonia no especificada'} · ${r.entidad || '—'}</div>
+      <div class="meta">CP ${r.cp || '—'} · ${r.calle || 'sin calle especificada'}</div>
+      <div class="badge">No se pudo ubicar en el mapa</div>`;
+    cont.appendChild(item);
+  });
+}
+
+async function cargarReportesCiudadanos(){
+  const statusEl = document.getElementById('citizen-status');
+  if(typeof Papa === 'undefined'){ statusEl.textContent = 'No se pudo cargar la librería de datos.'; return; }
+
+  Papa.parse(CSV_REPORTES_URL, {
+    download: true,
+    header: true,
+    complete: async (results) => {
+      const filas = (results.data || []).filter(r => (r['Colonia'] || '').trim() || (r['¿En qué alcaldía o municipio ocurrió?'] || '').trim());
+      if(filas.length === 0){ statusEl.textContent = 'Aún no hay reportes — comparte el formulario.'; return; }
+
+      statusEl.textContent = `Ubicando ${filas.length} reporte(s)…`;
+      const pendientes = [];
+
+      for(const fila of filas){
+        const entidad = (fila['¿En qué alcaldía o municipio ocurrió?'] || '').trim();
+        const colonia = (fila['Colonia'] || '').trim();
+        const cp = (fila['Código Postal'] || '').trim();
+        const calle = (fila['Calle o Avenida'] || '').trim();
+        const afectacion = (fila['Afectación'] || '').trim();
+        const descripcion = (fila['Descripción breve de la situación'] || '').trim();
+        const fecha = (fila['Marca temporal'] || '').trim();
+        const severidad = severidadDesdeAfectacion(afectacion);
+
+        const consulta = [calle, colonia, cp, entidad === 'CDMX' ? 'Ciudad de México' : 'Estado de México', 'México'].filter(Boolean).join(', ');
+        const coords = await geocodificar(consulta);
+        await new Promise(r => setTimeout(r, 1100)); // respeta el límite de 1 solicitud/seg de Nominatim
+
+        if(coords){
+          const marker = L.circleMarker([coords.lat, coords.lng], {
+            radius: radios[severidad] - 1,
+            color: colores[severidad],
+            weight: 2,
+            dashArray: '4,3',
+            fillColor: colores[severidad],
+            fillOpacity: 0.28,
+            className: 'marker-ciudadano'
+          });
+          marker.bindPopup(`
+            <div class="pop-title">${colonia || 'Reporte ciudadano'}</div>
+            <div style="color:#93A6BC;font-size:12px;">${calle ? calle + ' · ' : ''}${entidad}</div>
+            <div class="pop-tag ${severidad}">📍 Reporte ciudadano (sin verificar)</div>
+            <div>${descripcion || 'Sin descripción adicional.'}</div>
+            <div class="pop-src">📅 ${fecha || 'Fecha no disponible'}</div>
+          `);
+          marker.addTo(capaCiudadana);
+          contadorCiudadanos++;
+        } else {
+          pendientes.push({ entidad, colonia, cp, calle });
+        }
+      }
+
+      statusEl.textContent = `${contadorCiudadanos} reporte(s) ciudadano(s) en el mapa`;
+      renderPending(pendientes);
+    },
+    error: () => { statusEl.textContent = 'No se pudieron cargar los reportes.'; }
+  });
+}
+
+document.getElementById('toggle-citizen').addEventListener('change', (e) => {
+  if(e.target.checked){ map.addLayer(capaCiudadana); }
+  else{ map.removeLayer(capaCiudadana); }
+});
+
+cargarReportesCiudadanos();
 </script>
 </body>
 </html>
