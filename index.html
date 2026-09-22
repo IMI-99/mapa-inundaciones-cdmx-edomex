@@ -573,6 +573,26 @@ function entidadParaBusqueda(entidad){
   return entidad === 'CDMX' ? 'Ciudad de México' : 'Estado de México';
 }
 
+/* Coordenadas conocidas por colonia (centro aproximado).
+   Si una colonia nueva no aparece aquí, se intenta ubicar con Nominatim
+   y si tampoco se puede, queda en "Reportes por confirmar".
+   Ve agregando aquí las colonias que se repitan seguido. */
+const coloniasConocidas = {
+  'ALCE BLANCO': {lat:19.4670, lng:-99.2280},
+  'SAN ANDRES ATOTO': {lat:19.4770, lng:-99.2380},
+  'LINDAVISTA NORTE Y SUR': {lat:19.4880, lng:-99.1290},
+  'LINDAVISTA': {lat:19.4880, lng:-99.1290},
+  'BOSQUE DE CHAPULTEPEC I SECCION': {lat:19.4200, lng:-99.1850},
+  'BOSQUE DE CHAPULTEPEC': {lat:19.4200, lng:-99.1850},
+  'SAN RAFAEL': {lat:19.4430, lng:-99.1580},
+  'ATLAMPA': {lat:19.4580, lng:-99.1550},
+  'CUAUHTEMOC': {lat:19.4270, lng:-99.1610},
+  'TABACALERA': {lat:19.4370, lng:-99.1520},
+  'SANTA MARIA INSURGENTES': {lat:19.4550, lng:-99.1520},
+  'TLATILCO': {lat:19.4700, lng:-99.1630},
+  'VALLEJO PONIENTE': {lat:19.4950, lng:-99.1650}
+};
+
 const capaCiudadana = L.layerGroup().addTo(map);
 let contadorCiudadanos = 0;
 
@@ -627,7 +647,6 @@ async function procesarReportesGviz(response){
   }
 
   const cols = response.table.cols.map(c => (c.label || '').trim());
-  console.log('Columnas recibidas desde Google Sheets:', cols);
   const idx = {
     fecha: cols.indexOf('Marca temporal'),
     entidad: cols.indexOf('¿En qué alcaldía o municipio ocurrió?'),
@@ -659,9 +678,14 @@ async function procesarReportesGviz(response){
   for(const f of filas){
     const severidad = severidadDesdeAfectacion(f.afectacion);
     const entidadNormalizada = normalizarEntidad(f.entidad, f.cp);
-    const consulta = [f.calle, f.colonia, f.cp, f.entidad, entidadParaBusqueda(entidadNormalizada), 'México'].filter(Boolean).join(', ');
-    const coords = await geocodificar(consulta);
-    await new Promise(r => setTimeout(r, 1100)); // respeta el límite de 1 solicitud/seg de Nominatim
+    const claveColonia = textoClave(f.colonia);
+    let coords = coloniasConocidas[claveColonia] || null;
+
+    if(!coords){
+      const consulta = [f.calle, f.colonia, f.cp, f.entidad, entidadParaBusqueda(entidadNormalizada), 'México'].filter(Boolean).join(', ');
+      coords = await geocodificar(consulta);
+      await new Promise(r => setTimeout(r, 1100)); // respeta el límite de 1 solicitud/seg de Nominatim, solo cuando sí se consulta
+    }
 
     if(coords){
       const marker = L.circleMarker([coords.lat, coords.lng], {
