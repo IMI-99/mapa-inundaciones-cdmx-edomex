@@ -602,6 +602,7 @@ async function procesarReportesGviz(response){
   }
 
   const cols = response.table.cols.map(c => (c.label || '').trim());
+  console.log('Columnas recibidas desde Google Sheets:', cols);
   const idx = {
     fecha: cols.indexOf('Marca temporal'),
     entidad: cols.indexOf('¿En qué alcaldía o municipio ocurrió?'),
