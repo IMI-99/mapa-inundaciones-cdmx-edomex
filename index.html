@@ -286,13 +286,9 @@
 
         <div class="citizen-toggle">
           <div>
-            <div class="lbl">Reportes ciudadanos</div>
+            <div class="lbl">Datos del Google Sheet</div>
             <div class="sub" id="citizen-status">Cargando…</div>
           </div>
-          <label class="switch">
-            <input type="checkbox" id="toggle-citizen" checked>
-            <span class="slider"></span>
-          </label>
         </div>
 
         <div id="pending-section" style="display:none;">
@@ -302,7 +298,7 @@
 
         <div class="contribute">
           <b>¿Viste una inundación?</b><br>
-          Este mapa crece con reportes de la comunidad. Usa el botón <b>Reportar</b> de arriba para compartir la ubicación por WhatsApp o redes — cada dato ayuda a que alguien más evite perder su auto o algo peor.
+          Este mapa crece con reportes de la comunidad. Usa el botón <b>Reportar</b> de arriba para abrir el formulario — cada dato ayuda a que alguien más evite perder su auto o algo peor.
         </div>
 
       </div>
@@ -314,8 +310,8 @@
   </main>
 
   <footer>
-    <span>Fuentes: notas de prensa citadas en cada punto (Milenio, N+, Excélsior, El Universal, El Heraldo, LatinUS, Nación321, CAEM, UNAM) · datos de mayo–septiembre 2026, temporada de lluvias en curso. Faltan por incorporar enero–abril 2026 — contribuye si tienes datos.</span>
-    <span>Última actualización: 10 sep 2026 · No sustituye alertas oficiales de Protección Civil.</span>
+    <span>Fuente: reportes recibidos mediante Google Form y almacenados en Google Sheet.</span>
+    <span>Actualización automática al cargar la página · No sustituye alertas oficiales de Protección Civil.</span>
   </footer>
 
 </div>
@@ -332,7 +328,7 @@
    de coberturas periodísticas y reportes de CAEM / Protección Civil.
    Reemplaza o amplía este arreglo conforme llegues reportes nuevos.
    ========================================================= */
-const zonas = [
+const zonasSemilla = [
   {nombre:"Santa María Aztahuacán", entidad:"CDMX", demarcacion:"Iztapalapa", lat:19.3608, lng:-99.0138, severidad:"alta",
     descripcion:"Colonia recurrentemente inundada; cercanía con cauces entubados y hundimientos diferenciales agravan el encharcamiento.", fecha:"jun 2026", fuente:"LatinUS"},
   {nombre:"Santa Martha Acatitla", entidad:"CDMX", demarcacion:"Iztapalapa", lat:19.3564, lng:-98.9917, severidad:"alta",
@@ -389,6 +385,8 @@ const zonas = [
   {nombre:"Autopista México–Puebla km 3 / Puente La Concordia", entidad:"Edomex", demarcacion:"Chalco / Valle de Chalco", lat:19.3350, lng:-98.9700, severidad:"media",
     descripcion:"Asentamientos y anegaciones reportados en el tramo de acceso hacia Chalco y Valle de Chalco Solidaridad.", fecha:"may 2026", fuente:"N+"},
 ];
+
+const zonas = [];
 
 /* =========================================================
    MAPA
@@ -509,8 +507,10 @@ document.getElementById('drawer-toggle').addEventListener('click', () => {
 document.getElementById('drawer-handle').addEventListener('click', closeDrawer);
 
 /* =========================================================
-   REPORTAR / COMPARTIR — usa Web Share API (gratis, sin backend)
-   ========================================================= */
+  REPORTAR / COMPARTIR — usa Google Forms y Web Share API
+  ========================================================= */
+const FORM_REPORTES_URL = 'https://docs.google.com/forms/d/1yk4g0I9HxSzi_L0VcbXZ69DUQRbRS3FrnCRO3mXmUxw/viewform';
+
 function toast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -531,8 +531,7 @@ async function compartirTexto(texto, titulo){
 }
 
 document.getElementById('btn-reportar').addEventListener('click', () => {
-  const texto = '🚨 Reporte de inundación — Alerta Hídrica Valle de México. Ubicación: [escribe aquí calle/colonia y municipio o alcaldía]. Nivel de agua aprox.: [bajo/medio/alto]. Hora: ' + new Date().toLocaleString('es-MX');
-  compartirTexto(texto, 'Reportar inundación');
+  window.open(FORM_REPORTES_URL, '_blank', 'noopener');
 });
 
 document.getElementById('btn-compartir').addEventListener('click', () => {
@@ -551,6 +550,28 @@ function severidadDesdeAfectacion(texto){
   if(t.includes('alto')) return 'alta';
   if(t.includes('medio')) return 'media';
   return 'moderada';
+}
+
+const alcaldiasCdmx = new Set([
+  'ALVARO OBREGON','AZCAPOTZALCO','BENITO JUAREZ','COYOACAN','CUAJIMALPA DE MORELOS',
+  'CUAUHTEMOC','GUSTAVO A MADERO','IZTACALCO','IZTAPALAPA','LA MAGDALENA CONTRERAS',
+  'MIGUEL HIDALGO','MILPA ALTA','TLAHUAC','TLALPAN','VENUSTIANO CARRANZA','XOCHIMILCO'
+]);
+
+function textoClave(texto){
+  return String(texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+}
+
+function normalizarEntidad(texto, cp){
+  const clave = textoClave(texto);
+  const cpNum = Number(String(cp || '').replace(/\D/g, ''));
+  if(clave.includes('CDMX') || clave.includes('CIUDAD DE MEXICO') || alcaldiasCdmx.has(clave)) return 'CDMX';
+  if(cpNum >= 1000 && cpNum <= 16999) return 'CDMX';
+  return 'Edomex';
+}
+
+function entidadParaBusqueda(entidad){
+  return entidad === 'CDMX' ? 'Ciudad de México' : 'Estado de México';
 }
 
 const capaCiudadana = L.layerGroup().addTo(map);
@@ -638,7 +659,8 @@ async function procesarReportesGviz(response){
 
   for(const f of filas){
     const severidad = severidadDesdeAfectacion(f.afectacion);
-    const consulta = [f.calle, f.colonia, f.cp, f.entidad === 'CDMX' ? 'Ciudad de México' : 'Estado de México', 'México'].filter(Boolean).join(', ');
+    const entidadNormalizada = normalizarEntidad(f.entidad, f.cp);
+    const consulta = [f.calle, f.colonia, f.cp, f.entidad, entidadParaBusqueda(entidadNormalizada), 'México'].filter(Boolean).join(', ');
     const coords = await geocodificar(consulta);
     await new Promise(r => setTimeout(r, 1100)); // respeta el límite de 1 solicitud/seg de Nominatim
 
@@ -654,26 +676,34 @@ async function procesarReportesGviz(response){
       });
       marker.bindPopup(`
         <div class="pop-title">${f.colonia || 'Reporte ciudadano'}</div>
-        <div style="color:#93A6BC;font-size:12px;">${f.calle ? f.calle + ' · ' : ''}${f.entidad}</div>
+        <div style="color:#93A6BC;font-size:12px;">${f.calle ? f.calle + ' · ' : ''}${f.entidad || entidadNormalizada}</div>
         <div class="pop-tag ${severidad}">📍 Reporte ciudadano (sin verificar)</div>
         <div>${f.descripcion || 'Sin descripción adicional.'}</div>
         <div class="pop-src">📅 ${f.fecha || 'Fecha no disponible'}</div>
       `);
-      marker.addTo(capaCiudadana);
+      zonas.push({
+        nombre: f.colonia || f.calle || 'Reporte ciudadano',
+        entidad: entidadNormalizada,
+        demarcacion: f.entidad || entidadNormalizada,
+        lat: coords.lat,
+        lng: coords.lng,
+        severidad,
+        descripcion: f.descripcion || 'Sin descripción adicional.',
+        fecha: f.fecha || 'Fecha no disponible',
+        fuente: 'Google Sheets',
+        marker
+      });
       contadorCiudadanos++;
     } else {
       pendientes.push(f);
     }
   }
 
-  statusEl.textContent = `${contadorCiudadanos} reporte(s) ciudadano(s) en el mapa`;
+  initStats();
+  renderList();
+  statusEl.textContent = `${contadorCiudadanos} reporte(s) desde Google Sheets en el mapa`;
   renderPending(pendientes);
 }
-
-document.getElementById('toggle-citizen').addEventListener('change', (e) => {
-  if(e.target.checked){ map.addLayer(capaCiudadana); }
-  else{ map.removeLayer(capaCiudadana); }
-});
 
 cargarReportesCiudadanos();
 </script>
